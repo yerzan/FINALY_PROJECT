@@ -10,13 +10,15 @@ import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
 
+import static database.DatabaseConnection.connect;
+
 public class ZajeciaDAO {
 
     public List<Zajecia> getAllZajecia() {
         List<Zajecia> lista = new ArrayList<>();
         String query = "SELECT * FROM zajecia ORDER BY dzien, godzina";
 
-        try (Connection conn = DatabaseConnection.connect();
+        try (Connection conn = connect();
              Statement stmt = conn.createStatement();
              ResultSet rs = stmt.executeQuery(query)) {
 
@@ -34,7 +36,7 @@ public class ZajeciaDAO {
     public void usunZajecia(int id) {
         String sql = "DELETE FROM zajecia WHERE id = ?";
 
-        try (Connection conn = DatabaseConnection.connect();
+        try (Connection conn = connect();
              PreparedStatement stmt = conn.prepareStatement(sql)) {
             stmt.setInt(1, id);
             stmt.executeUpdate();
@@ -53,7 +55,7 @@ public class ZajeciaDAO {
         ) ORDER BY dzien, godzina
         """;
 
-        try (Connection conn = DatabaseConnection.connect();
+        try (Connection conn = connect();
              PreparedStatement stmt = conn.prepareStatement(sql)) {
 
             stmt.setString(1, grupa);
@@ -76,7 +78,7 @@ public class ZajeciaDAO {
         List<Zajecia> lista = new ArrayList<>();
         String sql = "SELECT * FROM zajecia WHERE sala = ?";
 
-        try (Connection conn = DatabaseConnection.connect();
+        try (Connection conn = connect();
              PreparedStatement stmt = conn.prepareStatement(sql)) {
 
             stmt.setString(1, sala);
@@ -97,7 +99,7 @@ public class ZajeciaDAO {
         String sql = "INSERT INTO zajecia (typ, kierunek, przedmiot, prowadzacy, sala, dzien, godzina) " +
                 "VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id;";
 
-        try (Connection conn = DatabaseConnection.connect();
+        try (Connection conn = connect();
              PreparedStatement stmt = conn.prepareStatement(sql)) {
 
             stmt.setString(1, zajecie.getClass().getSimpleName());
@@ -138,7 +140,7 @@ public class ZajeciaDAO {
 
     public boolean czySalaZajeta(String sala, String dzien, int godzina, Integer excludeId) {
         String sql = "SELECT COUNT(*) FROM zajecia WHERE sala = ? AND dzien = ? AND godzina = ? AND id != ?";
-        try (Connection conn = DatabaseConnection.connect();
+        try (Connection conn = connect();
              PreparedStatement stmt = conn.prepareStatement(sql)) {
 
             stmt.setString(1, sala);
@@ -156,32 +158,65 @@ public class ZajeciaDAO {
     }
 
     public boolean czyGrupaMaZajecia(String grupa, String dzien, int godzina, Integer excludeId) {
-        String sql = """
-        SELECT COUNT(*) FROM zajecia z
-        WHERE dzien = ? AND godzina = ? AND id != COALESCE(?, -1)
-          AND (
-            z.id IN (SELECT zajecia_id FROM laboratoria WHERE nr_grupy = ?)
-            OR z.id IN (SELECT zajecia_id FROM projekty WHERE grupa1 = ? OR grupa2 = ?)
-          )
-        """;
+        String sql = "SELECT * FROM zajecia WHERE dzien = ? AND godzina = ?";
+        if (excludeId != null) {
+            sql += " AND id != ?";
+        }
 
-        try (Connection conn = DatabaseConnection.connect();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
+        try (Connection conn = connect();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
 
-            stmt.setString(1, dzien);
-            stmt.setInt(2, godzina);
-            stmt.setObject(3, excludeId == null ? -1 : excludeId);
-            stmt.setString(4, grupa);
-            stmt.setString(5, grupa);
-            stmt.setString(6, grupa);
+            pstmt.setString(1, dzien);
+            pstmt.setInt(2, godzina);
+            if (excludeId != null) {
+                pstmt.setInt(3, excludeId);
+            }
 
-            ResultSet rs = stmt.executeQuery();
-            return rs.next() && rs.getInt(1) > 0;
+            ResultSet rs = pstmt.executeQuery();
+            while (rs.next()) {
+                int id = rs.getInt("id");
+                String typ = rs.getString("typ");
+
+                if (typ.equals("Wyklad")) {
+                    // wykłady są zawsze dla obu grup
+                    return true;
+                }
+
+                if (typ.equals("Laboratorium")) {
+                    PreparedStatement labStmt = conn.prepareStatement(
+                            "SELECT nr_grupy FROM laboratoria WHERE zajecia_id = ?");
+                    labStmt.setInt(1, id);
+                    ResultSet labRs = labStmt.executeQuery();
+                    if (labRs.next()) {
+                        String nr = labRs.getString("nr_grupy");
+                        if (grupa.equals(nr)) return true;
+                    }
+                    labRs.close();
+                    labStmt.close();
+                }
+
+                if (typ.equals("Projekt")) {
+                    PreparedStatement prStmt = conn.prepareStatement(
+                            "SELECT grupa1, grupa2 FROM projekty WHERE zajecia_id = ?");
+                    prStmt.setInt(1, id);
+                    ResultSet prRs = prStmt.executeQuery();
+                    if (prRs.next()) {
+                        String g1 = prRs.getString("grupa1");
+                        String g2 = prRs.getString("grupa2");
+                        if (grupa.equals(g1) || grupa.equals(g2)) return true;
+                    }
+                    prRs.close();
+                    prStmt.close();
+                }
+            }
+
         } catch (SQLException e) {
             e.printStackTrace();
-            return false;
         }
+
+        return false;
     }
+
 
     public void updateZajecia(Zajecia zajecie) {
         String sql = """
@@ -190,7 +225,7 @@ public class ZajeciaDAO {
         WHERE id = ?
         """;
 
-        try (Connection conn = DatabaseConnection.connect();
+        try (Connection conn = connect();
              PreparedStatement stmt = conn.prepareStatement(sql)) {
 
             stmt.setString(1, zajecie.getKierunek());
@@ -229,7 +264,7 @@ public class ZajeciaDAO {
         List<Zajecia> lista = new ArrayList<>();
         String sql = "SELECT * FROM zajecia WHERE typ = ? ORDER BY dzien, godzina";
 
-        try (Connection conn = DatabaseConnection.connect();
+        try (Connection conn = connect();
              PreparedStatement stmt = conn.prepareStatement(sql)) {
 
             stmt.setString(1, typ);
